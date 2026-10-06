@@ -45,6 +45,7 @@ follows `docs/data-model.md`, so the UI can be built before the API lands (contr
 - [Data model](docs/data-model.md)
 - [Architecture](docs/architecture.md)
 - [Runbook](docs/runbook.md)
+- [AWS setup: Day 1](docs/setup/aws-console-guide.md) · [Week 1 Track C](docs/setup/week1-track-c-aws-steps.md)
 
 ## Not in the 4-week scope (roadmap)
 

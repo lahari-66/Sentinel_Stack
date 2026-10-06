@@ -3,7 +3,7 @@
 Everything the team creates in AWS, so it can be torn down cleanly at the end (Day-1 checklist item 10).
 Alarm-by-alarm "what to do" sections are added by Track B in Week 4.
 
-Step-by-step console instructions: [setup/aws-console-guide.md](setup/aws-console-guide.md).
+Step-by-step console instructions: [Day 1](setup/aws-console-guide.md) · [Week 1 Track C](setup/week1-track-c-aws-steps.md).
 
 ## Resource inventory
 
@@ -20,7 +20,8 @@ Add a row the moment you create something. Remove it only after it has been dele
 | | | global | IAM OIDC provider + role | token.actions.githubusercontent.com, sentinel-github-deploy | Console | delete role, provider |
 | | | both | CDK bootstrap | CDKToolkit stack | `cdk bootstrap` | delete CDKToolkit stack + its bucket |
 | | | target | Insecure test stack | sentinel-target-insecure | CloudFormation | delete stack (KMS key: 7-day wait) |
-| | | target | Account-level S3 BPA (policy settings) changed | — | Console | **turn back on** |
+| | | global | Account-level S3 BPA (policy settings) changed | — | Console | **turn back on** |
+| | | target | EBS encryption by default turned off (only if it was on) | — | Console | **turn back on** |
 | | | platform | Cognito user pool (temporary, until core-dev) | | Console | delete pool + domain |
 | | | platform | Web bucket + CloudFront + function + OAC | | Console | disable + delete distribution, delete function/OAC, empty + delete bucket |
 
