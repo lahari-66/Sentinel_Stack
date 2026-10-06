@@ -1,0 +1,33 @@
+{
+  "_comment": "Findings a scan of tools/target-insecure.yaml must produce. The CI detection job resolves each logical_id to a physical resource with `aws cloudformation describe-stack-resources` and checks that a finding with rule_id exists whose resource_arn contains resource_match. 'account_level' findings depend on account state rather than the stack; 'not_covered' rules cannot be triggered by CloudFormation and are tested only with moto unit tests.",
+  "stack_name": "sentinel-target-insecure",
+  "template": "tools/target-insecure.yaml",
+  "region": "us-east-1",
+  "from_stack": [
+    { "rule_id": "S3-001", "severity": "CRITICAL", "logical_id": "PublicBucket", "resource_match": "{PhysicalResourceId}" },
+    { "rule_id": "S3-003", "severity": "LOW", "logical_id": "PublicBucket", "resource_match": "{PhysicalResourceId}" },
+    { "rule_id": "S3-004", "severity": "MEDIUM", "logical_id": "PublicBucket", "resource_match": "{PhysicalResourceId}" },
+    { "rule_id": "IAM-002", "severity": "HIGH", "logical_id": "ConsoleUser", "resource_match": "user/{PhysicalResourceId}" },
+    { "rule_id": "IAM-004", "severity": "HIGH", "logical_id": "ConsoleUser", "resource_match": "user/{PhysicalResourceId}" },
+    { "rule_id": "EC2-001", "severity": "HIGH", "logical_id": "SshOpenSecurityGroup", "resource_match": "security-group/{PhysicalResourceId}" },
+    { "rule_id": "EC2-003", "severity": "CRITICAL", "logical_id": "AllOpenSecurityGroup", "resource_match": "security-group/{PhysicalResourceId}" },
+    { "rule_id": "EC2-002", "severity": "HIGH", "logical_id": "RdpOpenSecurityGroup", "resource_match": "security-group/{PhysicalResourceId}" },
+    { "rule_id": "EBS-001", "severity": "MEDIUM", "logical_id": "UnencryptedVolume", "resource_match": "volume/{PhysicalResourceId}" },
+    { "rule_id": "KMS-001", "severity": "LOW", "logical_id": "NoRotationKey", "resource_match": "key/{PhysicalResourceId}" },
+    { "rule_id": "LAMBDA-001", "severity": "HIGH", "logical_id": "AdminFunction", "resource_match": "function:{PhysicalResourceId}" },
+    { "rule_id": "IAM-004", "severity": "HIGH", "logical_id": "AdminFunctionRole", "resource_match": "role/{PhysicalResourceId}", "note": "AdministratorAccess is Action * on Resource *; drop this entry if Track A decides IAM-004 only inspects users and customer policies." }
+  ],
+  "account_level": [
+    { "rule_id": "EC2-004", "severity": "LOW", "condition": "Always fires on the default VPC's default security group in the target region (default SGs ship with rules)." },
+    { "rule_id": "IAM-006", "severity": "LOW", "condition": "Fires while the account has no password policy or a weak one." },
+    { "rule_id": "CT-001", "severity": "HIGH", "condition": "Fires only if the account has no multi-region trail. The Day-1 checklist creates one, so expect this NOT to fire in the team account." },
+    { "rule_id": "CT-002", "severity": "LOW", "condition": "Fires if any trail has log file validation off. The Day-1 trail must have validation ON, so expect this NOT to fire." }
+  ],
+  "not_covered": [
+    { "rule_id": "S3-002", "reason": "AWS encrypts every new bucket with SSE-S3 since Jan 2023; default encryption cannot be removed. Covered by moto test only." },
+    { "rule_id": "IAM-001", "reason": "Root access keys must never be created. Covered by moto test only." },
+    { "rule_id": "IAM-003", "reason": "Needs a key older than 90 days. Covered by moto test only." },
+    { "rule_id": "IAM-005", "reason": "Needs credentials unused for 90+ days. Covered by moto test only." },
+    { "rule_id": "EBS-002", "reason": "CloudFormation cannot create or share snapshots; making one public in a real account is unsafe. Covered by moto test only." }
+  ]
+}

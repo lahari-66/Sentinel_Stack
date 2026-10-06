@@ -1,0 +1,228 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  SentinelStack known-INSECURE test target. Deliberately misconfigured resources that the scanner must
+  detect (see expected_findings.json). Deploy ONLY in the target region of the team's sandbox account,
+  never in production. Every resource that looks dangerous is neutralised: the "*:*" user and the admin
+  Lambda role also carry an explicit Deny-all policy, the public bucket is empty, and no EC2 instance
+  uses the open security groups. Delete the stack when you are not testing.
+  Approximate cost: about $1.10/month (KMS key $1, 1 GB gp3 volume ~$0.08), prorated by the hour.
+
+Parameters:
+  ConsoleUserPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 16
+    Description: >-
+      Console password for the MFA-less test user (IAM-002). Use a long random value and do not reuse it.
+      The user is denied every action anyway.
+
+Resources:
+  # ---------------------------------------------------------------- S3 ---------------------------------------
+  # S3-001 (public via bucket policy), S3-003 (versioning off), S3-004 (no TLS-only deny).
+  # S3-002 cannot be triggered here: since January 2023 AWS applies SSE-S3 to every bucket and it cannot
+  # be turned off. See expected_findings.json "not_covered".
+  PublicBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "sentinel-target-public-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+      Tags:
+        - Key: sentinelstack:test
+          Value: insecure
+
+  PublicBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PublicBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublicRead
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "${PublicBucket.Arn}/*"
+
+  # ---------------------------------------------------------------- IAM --------------------------------------
+  # IAM-002 (console user without MFA) and IAM-004 (inline policy grants *:*).
+  ConsoleUser:
+    Type: AWS::IAM::User
+    Metadata:
+      cfn-lint:
+        config:
+          # A NoEcho parameter is enough for a deny-all test user; Secrets Manager would add cost for no gain.
+          ignore_checks: [W1011]
+    Properties:
+      UserName: !Sub "sentinel-target-console-user-${AWS::Region}"
+      LoginProfile:
+        Password: !Ref ConsoleUserPassword
+        PasswordResetRequired: false
+      Policies:
+        - PolicyName: sentinel-target-star-star
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: "*"
+                Resource: "*"
+        # Safety net: an explicit Deny always wins, so this user can do nothing at all.
+        - PolicyName: sentinel-target-deny-all
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Deny
+                Action: "*"
+                Resource: "*"
+      Tags:
+        - Key: sentinelstack:test
+          Value: insecure
+
+  # ---------------------------------------------------------------- EC2 --------------------------------------
+  # Security groups land in the region's default VPC. EC2-004 (default SG has rules) fires on that VPC's
+  # default security group without this stack doing anything.
+  SshOpenSecurityGroup: # EC2-001
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: sentinel-target-ssh-open
+      GroupDescription: SentinelStack test - SSH open to the world
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: sentinelstack:test
+          Value: insecure
+
+  RdpOpenSecurityGroup: # EC2-002
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: sentinel-target-rdp-open
+      GroupDescription: SentinelStack test - RDP open to the world
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: sentinelstack:test
+          Value: insecure
+
+  AllOpenSecurityGroup: # EC2-003
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: sentinel-target-all-open
+      GroupDescription: SentinelStack test - all traffic open to the world
+      SecurityGroupIngress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: sentinelstack:test
+          Value: insecure
+
+  # ---------------------------------------------------------------- EBS --------------------------------------
+  # EBS-001. Fails to deploy if "EBS encryption by default" is on in this region — turn it off for the test
+  # or accept that EBS-001 is not covered (see runbook).
+  UnencryptedVolume:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Size: 1
+      VolumeType: gp3
+      Encrypted: false
+      Tags:
+        - Key: Name
+          Value: sentinel-target-unencrypted
+        - Key: sentinelstack:test
+          Value: insecure
+
+  # ---------------------------------------------------------------- KMS --------------------------------------
+  # KMS-001. A customer-managed key with rotation off ($1/month while it exists; deletion waits 7 days).
+  NoRotationKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Description: SentinelStack test - CMK without rotation
+      EnableKeyRotation: false
+      PendingWindowInDays: 7
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AccountAdmin
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+      Tags:
+        - Key: sentinelstack:test
+          Value: insecure
+
+  # ---------------------------------------------------------------- Lambda -----------------------------------
+  # LAMBDA-001. The role has AdministratorAccess attached (what the rule looks for) plus an explicit Deny-all,
+  # so the function cannot actually use it.
+  AdminFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "sentinel-target-admin-fn-role-${AWS::Region}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+      Policies:
+        - PolicyName: sentinel-target-deny-all
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Deny
+                Action: "*"
+                Resource: "*"
+      Tags:
+        - Key: sentinelstack:test
+          Value: insecure
+
+  AdminFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sentinel-target-admin-fn
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt AdminFunctionRole.Arn
+      Timeout: 3
+      Code:
+        ZipFile: |
+          def handler(event, context):
+              return {"ok": True}
+      Tags:
+        - Key: sentinelstack:test
+          Value: insecure
+
+Outputs:
+  PublicBucketName:
+    Value: !Ref PublicBucket
+  PublicBucketArn:
+    Value: !GetAtt PublicBucket.Arn
+  ConsoleUserArn:
+    Value: !GetAtt ConsoleUser.Arn
+  SshOpenSecurityGroupId:
+    Value: !GetAtt SshOpenSecurityGroup.GroupId
+  RdpOpenSecurityGroupId:
+    Value: !GetAtt RdpOpenSecurityGroup.GroupId
+  AllOpenSecurityGroupId:
+    Value: !GetAtt AllOpenSecurityGroup.GroupId
+  UnencryptedVolumeId:
+    Value: !Ref UnencryptedVolume
+  NoRotationKeyArn:
+    Value: !GetAtt NoRotationKey.Arn
+  AdminFunctionArn:
+    Value: !GetAtt AdminFunction.Arn
