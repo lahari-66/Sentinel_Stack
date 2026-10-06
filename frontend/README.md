@@ -49,4 +49,14 @@ Rules for this folder:
   never `dangerouslySetInnerHTML`.
 - Every data view handles loading, empty and error states.
 
-AWS setup for hosting and sign-in: [docs/setup/aws-console-guide.md](../docs/setup/aws-console-guide.md).
+## Deploy
+
+```powershell
+copy .env.production.example .env.production.local   # fill in Cognito + CloudFront values
+.\deploy\deploy.ps1 -Bucket <web bucket> -DistributionId <distribution id>
+```
+
+(`deploy/deploy.sh` does the same on macOS/Linux.) `deploy/cloudfront-index-rewrite.js` is the CloudFront
+Function that serves `/path/index.html` for `/path/`.
+
+AWS setup for hosting and sign-in: [docs/setup/week1-track-c-aws-steps.md](../docs/setup/week1-track-c-aws-steps.md).
