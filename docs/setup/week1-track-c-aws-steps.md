@@ -11,7 +11,15 @@ login flow, target stack template, deploy scripts) is already in the repo — th
 | Saturday | Demo prep | [Part D](#part-d--saturday-demo-checklist) | ~15 min |
 
 **Before you start** you need the Day-1 checklist done ([aws-console-guide.md](aws-console-guide.md)):
-your own IAM user `dev-c` with MFA, and for Part C step C9 the AWS CLI profile `sentinel`.
+
+- your own IAM login **`dev-c`** (one of the plan's three: `dev-a` Track A, `dev-b` Track B, `dev-c`
+  Track C) with **MFA** and **AdministratorAccess** — every step below is done as `dev-c`, never as root
+  and never with a teammate's login;
+- for Part C step C9, the AWS CLI profile **`sentinel`** holding *your own* `dev-c` access key;
+- root has activated **IAM access to billing** (Day-1 step 1.1.5), or the Cost Explorer check in Part D
+  shows *Access denied*.
+
+If the team named your login differently, use that name wherever this guide says `dev-c`.
 
 ---
 
@@ -51,7 +59,8 @@ This guide uses `ap-south-1` (Asia Pacific (Mumbai)) as the platform region and 
    `https://<V1>.signin.aws.amazon.com/console` (ask whoever made `dev-c` if you don't have it).
 2. Choose **IAM user**, enter account ID, user name `dev-c`, your password → **Sign in**.
 3. Enter the 6-digit code from your authenticator app.
-4. You are in when the top bar shows **dev-c @ <account ID>** at the right.
+4. You are in when the top bar shows **dev-c @ <account ID>** at the right. If it shows **root** or
+   another member's user, sign out — the plan says root is never used and logins are never shared.
 
 ---
 
@@ -63,6 +72,10 @@ This guide uses `ap-south-1` (Asia Pacific (Mumbai)) as the platform region and 
 **What it creates:** a public (empty) S3 bucket, an IAM user with a console password and no MFA, an inline
 `*:*` policy, three wide-open security groups, an unencrypted 1 GB EBS volume, a KMS key with rotation off,
 and a Lambda function whose role has AdministratorAccess.
+
+**About the extra IAM user:** this stack creates `sentinel-target-console-user-us-east-1`. It is **not** a
+fourth team login — it is a test object the scanner must flag (IAM-002, IAM-004), it is denied every action,
+and nobody signs in with it. Your own work stays on `dev-c`.
 
 **Why it's safe:** the user and the Lambda role also carry an explicit **Deny everything** policy (a Deny
 always beats an Allow), the bucket holds no objects, and no EC2 instance uses the security groups.
@@ -577,7 +590,7 @@ Open the distribution (CloudFront → Distributions → your ID).
 
 ```powershell
 cd Sentinel_Stack\frontend
-aws sts get-caller-identity --profile sentinel     # must show user/dev-c
+aws sts get-caller-identity --profile sentinel     # must show user/dev-c — not root, not a teammate
 powershell -ExecutionPolicy Bypass -File .\deploy\deploy.ps1 -Bucket <V7> -DistributionId <V8>
 ```
 
