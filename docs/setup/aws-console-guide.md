@@ -16,32 +16,73 @@ Values used below — agree on them at the Day-1 meeting and fill them in here:
 | Platform region | `ap-south-1` (Mumbai) |
 | Target region | `us-east-1` (N. Virginia) |
 | AWS account ID | `____________` |
-| Your IAM user | `dev-c` (Track C) |
+| Your IAM user | `dev-c` (Track C) — see 1.2 |
 
 ---
 
 ## Part 1 — Day-1 checklist (all three together, in this order)
 
-### 1.1 Root account (the person who owns the root login)
+### 1.1 Root account (Track A, who holds the root login)
+
+The plan: *"Root account: strong password, MFA, no access keys"* and *"Never share root."* Root is used
+only for 1.1 and 1.2, then never again.
 
 1. Sign in as root → top-right account menu → **Security credentials**.
 2. **Multi-factor authentication (MFA)** → **Assign MFA device** → Authenticator app → scan the QR code
    → enter two consecutive codes → **Add MFA**.
 3. On the same page, under **Access keys**: there must be **none**. If any exist → **Actions → Delete**.
-4. Make sure the root password is long and unique. Sign out of root; from now on nobody uses it.
+4. Make sure the root password is long and unique.
+5. **Let the IAM users see billing** (only root can do this — without it, `dev-a/b/c` get *Access denied* on
+   Budgets and Cost Explorer even with AdministratorAccess):
+   top-right account menu → **Account** → scroll to **IAM user and role access to Billing information** →
+   **Edit** → tick **Activate IAM Access** → **Update**.
+6. **Stay signed in as root** and continue with 1.2 — someone has to create the first IAM users.
 
-### 1.2 IAM users dev-a, dev-b, dev-c
+### 1.2 The three IAM logins: dev-a, dev-b, dev-c
 
-1. Console → **IAM → Users → Create user**.
-2. User name `dev-a` → tick **Provide user access to the AWS Management Console** → **I want to create an
-   IAM user** → custom password → untick "must create a new password" only if you'll hand it over in person.
+The plan: *"IAM users dev-a, dev-b, dev-c, MFA on all three, AdministratorAccess for the build"* and
+*"keys only on your own laptop."* One login per person, never shared:
+
+| IAM user | Used by | Profile on their laptop |
+|---|---|---|
+| `dev-a` | Track A — Scanner & IAM | `sentinel` |
+| `dev-b` | Track B — Backend, Alerts & AI | `sentinel` |
+| `dev-c` | Track C — Frontend, Test Stacks & Docs | `sentinel` |
+
+(The plan names the users but doesn't map them to tracks; this mapping is the team convention.)
+
+**If the three users already exist**, don't recreate them — check them instead:
+
+1. **IAM → Users.** Exactly `dev-a`, `dev-b`, `dev-c`. The only other user allowed is the deny-all test
+   user `sentinel-target-console-user-us-east-1`, which appears once Track C deploys the target stack.
+2. For each user, the list columns (use the ⚙ icon to show them) must read:
+   **MFA** = *Virtual* (not empty) · **Console last sign-in** = a date once they've logged in ·
+   **Active key age** = only one key, created by that person.
+3. Open each user → **Permissions** tab → **AdministratorAccess** is attached.
+4. Anything missing → fix it with the matching step below.
+
+**To create them** (root, continuing from 1.1):
+
+1. **IAM → Users → Create user**.
+2. User name `dev-a` → tick **Provide user access to the AWS Management Console** → if asked, choose
+   **I want to create an IAM user** → **Custom password** → a temporary password → keep
+   **Users must create a new password at next sign-in** ticked → **Next**.
 3. **Permissions options → Attach policies directly** → tick **AdministratorAccess** → **Next → Create user**.
-4. Repeat for `dev-b` and `dev-c`.
-5. Each person signs in as their own user (sign-in URL is on the IAM dashboard) → top-right menu →
-   **Security credentials → Assign MFA device** → authenticator app.
-6. Still in **Security credentials → Access keys → Create access key** → use case **Command Line Interface
-   (CLI)** → tick the confirmation → **Create**. Copy the key ID and secret **straight into the CLI** (step
-   1.8); don't save them anywhere else. Download the CSV only if you'll delete it right after.
+4. Copy the **console sign-in URL** shown on the success page (`https://<account-id>.signin.aws.amazon.com/console`).
+5. Repeat for `dev-b` and `dev-c`. Give each person their user name and temporary password **in person or by
+   phone** — not in the group chat.
+6. **Root signs out now** and doesn't sign in again (except for billing emergencies).
+
+**Each person, on their own laptop** (Track C does this as `dev-c`):
+
+7. Open the sign-in URL → **IAM user** → account ID, your user name, temporary password → set a new password.
+8. Top-right menu → **Security credentials** → **Assign MFA device** → name `dev-c-phone` →
+   **Authenticator app** → scan → two consecutive codes → **Add MFA**. Sign out and in again to confirm MFA
+   is asked.
+9. **Security credentials → Access keys → Create access key** → use case **Command Line Interface (CLI)** →
+   tick the confirmation → **Next → Create access key**. Keep this page open and go straight to step 1.8 to
+   paste the two values into `aws configure`. Don't download the CSV, don't save them anywhere else, and
+   never send them to anyone — teammates use their own keys.
 
 ### 1.3 Budgets ($10 / $25 / $50 / $80)
 
@@ -106,7 +147,10 @@ aws configure --profile sentinel
 aws sts get-caller-identity --profile sentinel
 ```
 
-**Done when** the output shows `arn:aws:iam::<account>:user/dev-c`.
+**Done when** the output shows `arn:aws:iam::<account>:user/dev-c` — and the same command shows
+`user/dev-a` and `user/dev-b` on the other two laptops (plan, Week 1 Monday: *"all three run aws sts
+get-caller-identity with their own profile"*). If it shows `:root`, you configured root keys — delete
+them (1.1 step 3) and use your IAM user's key.
 
 ### 1.9 CDK bootstrap (Track A runs it; once per region)
 
