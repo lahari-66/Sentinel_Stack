@@ -19,7 +19,7 @@ env = cdk.Environment(
 
 web = WebStack(app, f"sentinel-web-{stage}", stage=stage, env=env)
 core = CoreStack(app, f"sentinel-core-{stage}", stage=stage, web_domain=web.domain_name, env=env)
-api = ApiStack(
+ApiStack(
     app,
     f"sentinel-api-{stage}",
     stage=stage,
@@ -27,8 +27,8 @@ api = ApiStack(
     web_domain=web.domain_name,
     env=env,
 )
-if SiteStack.frontend_built():  # run `npm run build` in frontend/ first
-    SiteStack(app, f"sentinel-site-{stage}", web=web, core=core, api=api, env=env)
+if SiteStack.frontend_built():  # build frontend/ with the core/api/web outputs first (see deploy.yml)
+    SiteStack(app, f"sentinel-site-{stage}", web=web, env=env)
 
 cdk.Tags.of(app).add("project", "sentinelstack")
 cdk.Tags.of(app).add("stage", stage)
