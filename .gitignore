@@ -35,3 +35,4 @@ htmlcov/
 # CDK
 infra/cdk.out/
 cdk.context.json
+cdk-outputs-*.json

@@ -1,0 +1,81 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write # OIDC
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-dev:
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Backend tests
+        working-directory: backend
+        run: |
+          pip install -r requirements-dev.txt
+          pytest -q
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.PLATFORM_REGION || 'ap-south-1' }}
+
+      - name: Install CDK
+        working-directory: infra
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r requirements.txt
+          npm install -g aws-cdk
+
+      # Phase 1: backend infrastructure. The frontend bakes these outputs in at build time.
+      - name: CDK deploy core, api, web (dev)
+        working-directory: infra
+        run: |
+          rm -rf ../frontend/out
+          cdk deploy sentinel-web-dev sentinel-core-dev sentinel-api-dev -c stage=dev             --require-approval never --app ".venv/bin/python app.py" --outputs-file cdk-outputs-dev.json
+
+      - name: Build frontend against dev
+        working-directory: frontend
+        run: |
+          out=../infra/cdk-outputs-dev.json
+          site=$(jq -r '."sentinel-web-dev".SiteUrl' $out)
+          export NEXT_PUBLIC_API_URL=$(jq -r '."sentinel-api-dev".ApiUrl' $out)
+          export NEXT_PUBLIC_COGNITO_DOMAIN="https://$(jq -r '."sentinel-core-dev".CognitoDomain' $out)"
+          export NEXT_PUBLIC_COGNITO_CLIENT_ID=$(jq -r '."sentinel-core-dev".UserPoolClientId' $out)
+          export NEXT_PUBLIC_COGNITO_REDIRECT_URI="$site/auth/callback/"
+          export NEXT_PUBLIC_COGNITO_LOGOUT_URI="$site/login/"
+          export NEXT_PUBLIC_USE_MOCKS=false
+          npm ci
+          npm run build
+
+      # Phase 2: upload the built site and invalidate CloudFront.
+      - name: CDK deploy site (dev)
+        working-directory: infra
+        run: |
+          cdk deploy sentinel-site-dev -c stage=dev --exclusively             --require-approval never --app ".venv/bin/python app.py"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cdk-outputs-dev
+          path: infra/cdk-outputs-dev.json
+
+  # Week 4: the CI detection test runs here, then a deploy-prod job using `environment: prod`
+  # (required reviewers configured in GitHub) provides the manual approval gate.
