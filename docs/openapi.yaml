@@ -1,0 +1,551 @@
+openapi: 3.0.3
+info:
+  title: SentinelStack API
+  version: 0.1.0
+  description: >-
+    Every route except /health requires a Cognito ID token (`Authorization: Bearer <jwt>`), verified by the
+    API Gateway JWT authorizer. The caller's organisation comes from the `custom:org_id` claim, never from
+    the request. Routes marked **admin** return 403 for viewers.
+servers:
+  - url: https://{apiId}.execute-api.ap-south-1.amazonaws.com
+    variables:
+      apiId:
+        default: example
+
+security:
+  - cognito: []
+
+tags:
+  - name: meta
+  - name: accounts
+  - name: scans
+  - name: findings
+  - name: org
+
+paths:
+  /health:
+    get:
+      tags: [meta]
+      security: []
+      summary: Liveness check
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: ok}
+
+  /me:
+    get:
+      tags: [meta]
+      summary: The signed-in user
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Me"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+
+  /accounts:
+    get:
+      tags: [accounts]
+      summary: List the org's onboarded AWS accounts
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: "#/components/schemas/Account"}
+    post:
+      tags: [accounts]
+      summary: "Start onboarding an account (admin)"
+      description: >-
+        Generates an External ID (stored KMS-encrypted), creates the account in `pending` status and returns a
+        CloudFormation quick-create URL for tools/onboarding.yaml. The External ID is only ever shown inside that URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [aws_account_id]
+              properties:
+                aws_account_id: {type: string, pattern: "^[0-9]{12}$"}
+                name: {type: string, maxLength: 64}
+                region: {type: string, example: us-east-1}
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Account"
+                  - type: object
+                    properties:
+                      quick_create_url: {type: string, format: uri}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+
+  /accounts/{accountId}:
+    parameters: [{$ref: "#/components/parameters/AccountId"}]
+    delete:
+      tags: [accounts]
+      summary: "Remove an account and its schedule (admin)"
+      responses:
+        "204": {description: Deleted}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /accounts/{accountId}/verify:
+    parameters: [{$ref: "#/components/parameters/AccountId"}]
+    post:
+      tags: [accounts]
+      summary: "Save the role ARN and test AssumeRole (admin)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role_arn]
+              properties:
+                role_arn:
+                  type: string
+                  pattern: "^arn:aws:iam::[0-9]{12}:role/.+$"
+      responses:
+        "200":
+          description: Result of the AssumeRole test; status becomes connected or stays pending.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Account"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "422":
+          description: Role could not be assumed (wrong ARN, External ID mismatch, or trust policy).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /accounts/{accountId}/scans:
+    parameters: [{$ref: "#/components/parameters/AccountId"}]
+    post:
+      tags: [scans]
+      summary: "Start an on-demand scan (admin)"
+      responses:
+        "202":
+          description: Scan started
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Scan"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: A scan is already running, or the account is not connected.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+    get:
+      tags: [scans]
+      summary: Scan history, newest first (also feeds the score trend chart)
+      parameters:
+        - {$ref: "#/components/parameters/Limit"}
+        - {$ref: "#/components/parameters/Cursor"}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: "#/components/schemas/Scan"}
+                  next_cursor: {type: string, nullable: true}
+
+  /scans/{scanId}:
+    parameters:
+      - name: scanId
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [scans]
+      summary: One scan, including the diff against the previous scan
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Scan"
+                  - type: object
+                    properties:
+                      new_findings: {type: array, items: {type: string}, description: finding ids}
+                      resolved_findings: {type: array, items: {type: string}}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /findings:
+    get:
+      tags: [findings]
+      summary: List findings across the org's accounts
+      parameters:
+        - {name: account_id, in: query, schema: {type: string}}
+        - {name: severity, in: query, schema: {$ref: "#/components/schemas/Severity"}}
+        - {name: service, in: query, schema: {$ref: "#/components/schemas/Group"}}
+        - {name: status, in: query, schema: {$ref: "#/components/schemas/FindingStatus"}}
+        - {name: rule_id, in: query, schema: {type: string}}
+        - {name: q, in: query, description: substring match on resource ARN, schema: {type: string}}
+        - {$ref: "#/components/parameters/Limit"}
+        - {$ref: "#/components/parameters/Cursor"}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: "#/components/schemas/Finding"}
+                  next_cursor: {type: string, nullable: true}
+
+  /findings/{findingId}:
+    parameters: [{$ref: "#/components/parameters/FindingId"}]
+    get:
+      tags: [findings]
+      summary: One finding with evidence and rule metadata
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Finding"
+                  - type: object
+                    properties:
+                      rule: {$ref: "#/components/schemas/Rule"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /findings/{findingId}/suppress:
+    parameters: [{$ref: "#/components/parameters/FindingId"}]
+    post:
+      tags: [findings]
+      summary: "Suppress a finding; excluded from the score (admin)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string, minLength: 3, maxLength: 500}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Finding"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /findings/{findingId}/unsuppress:
+    parameters: [{$ref: "#/components/parameters/FindingId"}]
+    post:
+      tags: [findings]
+      summary: "Remove a suppression (admin)"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Finding"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /findings/{findingId}/explain:
+    parameters: [{$ref: "#/components/parameters/FindingId"}]
+    post:
+      tags: [findings]
+      summary: AI explanation and draft fix (Bedrock); cached on the finding
+      description: >-
+        Text proposal only; nothing is executed. Resource names, tags and evidence are passed to the model
+        as untrusted data.
+      parameters:
+        - {name: refresh, in: query, schema: {type: boolean, default: false}}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Explanation"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503":
+          description: Bedrock unavailable
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /rules:
+    get:
+      tags: [findings]
+      summary: The rule catalogue
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: "#/components/schemas/Rule"}
+
+  /audit:
+    get:
+      tags: [org]
+      summary: "Audit log, newest first (admin)"
+      parameters:
+        - {$ref: "#/components/parameters/Limit"}
+        - {$ref: "#/components/parameters/Cursor"}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: "#/components/schemas/AuditEntry"}
+                  next_cursor: {type: string, nullable: true}
+        "403": {$ref: "#/components/responses/Forbidden"}
+
+  /settings:
+    get:
+      tags: [org]
+      summary: Org settings
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Settings"}
+    put:
+      tags: [org]
+      summary: "Update org settings (admin)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Settings"}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Settings"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+
+components:
+  securitySchemes:
+    cognito:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema: {type: string, pattern: "^[0-9]{12}$"}
+    FindingId:
+      name: findingId
+      in: path
+      required: true
+      description: "URL-safe id: <awsAccountId>~<ruleId>~<sha1(resourceArn)>"
+      schema: {type: string}
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from the previous page's next_cursor.
+      schema: {type: string}
+
+  responses:
+    BadRequest:
+      description: Invalid input
+      content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
+    Unauthorized:
+      description: Missing or invalid token
+      content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
+    Forbidden:
+      description: Admin role required
+      content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
+    NotFound:
+      description: Not found in the caller's organisation
+      content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
+    Conflict:
+      description: Already exists
+      content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
+    TooManyRequests:
+      description: Rate limited
+      content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string, example: not_found}
+            message: {type: string}
+            request_id: {type: string}
+
+    Severity:
+      type: string
+      enum: [CRITICAL, HIGH, MEDIUM, LOW]
+    Group:
+      type: string
+      enum: [s3, iam, ec2, ebs, cloudtrail, kms, lambda]
+    FindingStatus:
+      type: string
+      enum: [open, resolved, suppressed]
+
+    Me:
+      type: object
+      properties:
+        sub: {type: string}
+        email: {type: string, nullable: true}
+        org_id: {type: string}
+        role: {type: string, enum: [admin, viewer]}
+
+    Account:
+      type: object
+      properties:
+        aws_account_id: {type: string}
+        name: {type: string}
+        region: {type: string}
+        role_arn: {type: string, nullable: true}
+        status: {type: string, enum: [pending, connected, disconnected]}
+        last_scan_id: {type: string, nullable: true}
+        last_score: {type: integer, nullable: true, minimum: 0, maximum: 100}
+        last_scan_at: {type: string, format: date-time, nullable: true}
+
+    SeverityCounts:
+      type: object
+      properties:
+        critical: {type: integer}
+        high: {type: integer}
+        medium: {type: integer}
+        low: {type: integer}
+
+    Scan:
+      type: object
+      properties:
+        scan_id: {type: string}
+        aws_account_id: {type: string}
+        status: {type: string, enum: [running, succeeded, partial, failed]}
+        trigger: {type: string, enum: [manual, schedule]}
+        started_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time, nullable: true}
+        score: {type: integer, nullable: true}
+        counts: {$ref: "#/components/schemas/SeverityCounts"}
+        new: {type: integer}
+        resolved: {type: integer}
+        rule_errors:
+          type: array
+          items:
+            type: object
+            properties:
+              rule_id: {type: string}
+              error: {type: string}
+
+    Finding:
+      type: object
+      properties:
+        id: {type: string}
+        aws_account_id: {type: string}
+        rule_id: {type: string, example: S3-001}
+        service: {$ref: "#/components/schemas/Group"}
+        severity: {$ref: "#/components/schemas/Severity"}
+        title: {type: string}
+        resource_arn: {type: string}
+        evidence: {type: object, additionalProperties: true}
+        status: {$ref: "#/components/schemas/FindingStatus"}
+        first_seen: {type: string, format: date-time}
+        last_seen: {type: string, format: date-time}
+        resolved_at: {type: string, format: date-time, nullable: true}
+        suppressed:
+          type: object
+          nullable: true
+          properties:
+            by: {type: string}
+            reason: {type: string}
+            at: {type: string, format: date-time}
+
+    Rule:
+      type: object
+      properties:
+        id: {type: string}
+        title: {type: string}
+        severity: {$ref: "#/components/schemas/Severity"}
+        group: {$ref: "#/components/schemas/Group"}
+        description: {type: string}
+        remediation: {type: string}
+
+    Explanation:
+      type: object
+      properties:
+        summary: {type: string}
+        impact: {type: string}
+        fix_cli: {type: string}
+        fix_cloudformation: {type: string}
+        model_id: {type: string}
+        generated_at: {type: string, format: date-time}
+        cached: {type: boolean}
+        disclaimer: {type: string, example: "AI-generated proposal — review before applying"}
+
+    AuditEntry:
+      type: object
+      properties:
+        at: {type: string, format: date-time}
+        user: {type: string}
+        action: {type: string, example: finding.suppress}
+        target: {type: string}
+        details: {type: object, additionalProperties: true}
+
+    Settings:
+      type: object
+      properties:
+        alert_emails:
+          type: array
+          maxItems: 10
+          items: {type: string, format: email}
+        scan_interval_hours: {type: integer, enum: [6, 12, 24]}
