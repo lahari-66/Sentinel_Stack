@@ -1,0 +1,40 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  SentinelStack read-only scanner role. Creates one IAM role with the AWS-managed
+  SecurityAudit policy, assumable only by the SentinelStack scanner with your External ID.
+
+Parameters:
+  ExternalId:
+    Type: String
+    MinLength: 16
+    NoEcho: true
+    Description: External ID shown in the SentinelStack onboarding wizard. Do not share it.
+  ScannerPrincipalArn:
+    Type: String
+    AllowedPattern: "arn:aws:iam::[0-9]{12}:(role|user)/.+"
+    Description: ARN of the SentinelStack scanner Lambda role (pre-filled by the quick-create link). An IAM user ARN is allowed for local testing.
+
+Resources:
+  SentinelStackScannerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SentinelStackScannerRole
+      Description: Read-only role used by SentinelStack to scan this account for misconfigurations.
+      MaxSessionDuration: 3600
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/SecurityAudit
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref ScannerPrincipalArn
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+
+Outputs:
+  RoleArn:
+    Description: Paste this into SentinelStack.
+    Value: !GetAtt SentinelStackScannerRole.Arn
