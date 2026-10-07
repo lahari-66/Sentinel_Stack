@@ -123,13 +123,20 @@ The plan: *"IAM users dev-a, dev-b, dev-c, MFA on all three, AdministratorAccess
 
 ### 1.7 GitHub OIDC + deploy role (Track B leads; everyone watches)
 
-1. **IAM → Identity providers → Add provider → OpenID Connect**.
-   Provider URL `https://token.actions.githubusercontent.com`, audience `sts.amazonaws.com` → **Add provider**.
-2. **IAM → Roles → Create role → Web identity** → provider `token.actions.githubusercontent.com`,
-   audience `sts.amazonaws.com`, GitHub organization `lahari-66`, repository `Sentinel_Stack`, branch `main`
-   → attach **AdministratorAccess** for the build (tightened in Week 4) → name `sentinel-github-deploy`.
-3. Open the role → **Trust relationships → Edit** and confirm the condition reads
-   `"token.actions.githubusercontent.com:sub": "repo:lahari-66/Sentinel_Stack:ref:refs/heads/main"`.
+Do this **after `cdk bootstrap` (1.9)** — the deploy role only gets permission to assume the CDK bootstrap roles.
+
+1. Region **ap-south-1** → **CloudFormation → Create stack → With new resources → Upload a template file**
+   → `tools/github-oidc.yaml` → stack name `sentinelstack-github-oidc`.
+   Parameters: `GitHubOwner` = `lahari-66`, `RepoName` = `Sentinel_Stack` (both case-sensitive).
+   Set `CreateOidcProvider` = `false` only if **IAM → Identity providers** already lists
+   `token.actions.githubusercontent.com`.
+2. Tick *I acknowledge that AWS CloudFormation might create IAM resources with custom names* → **Submit**.
+   The role trusts `repo:lahari-66/Sentinel_Stack:ref:refs/heads/main` **and** the `dev`/`prod`
+   environments — the deploy job runs in `environment: dev`, so a role trusting only the branch is refused.
+3. Copy the **DeployRoleArn** output → GitHub repo → **Settings → Secrets and variables → Actions →
+   Variables**: `AWS_DEPLOY_ROLE_ARN` = that ARN, `PLATFORM_REGION` = `ap-south-1`. Then
+   **Settings → Environments**: create `dev` and `prod` (prod: required reviewers = all three).
+   If you already created a `sentinel-github-deploy` role by hand, delete it.
 4. GitHub repo → **Settings → Branches → Add branch ruleset / protection rule** for `main`: require a pull
    request, 1 approval, and status checks once CI exists.
 

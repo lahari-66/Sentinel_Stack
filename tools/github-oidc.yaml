@@ -6,10 +6,12 @@ Description: >-
 Parameters:
   GitHubOwner:
     Type: String
+    Default: lahari-66
     Description: GitHub user or organisation that owns the repo (case-sensitive).
   RepoName:
     Type: String
-    Default: sentinelstack
+    Default: Sentinel_Stack
+    Description: Repository name exactly as on GitHub (case-sensitive; the OIDC subject must match).
   CreateOidcProvider:
     Type: String
     AllowedValues: ["true", "false"]
