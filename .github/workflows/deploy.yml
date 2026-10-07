@@ -1,0 +1,64 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write # OIDC
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-dev:
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Backend tests
+        working-directory: backend
+        run: |
+          pip install -r requirements-dev.txt
+          pytest -q
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_USE_MOCKS: "0" # real Cognito + API; values come from /config.json at runtime
+        run: |
+          npm ci
+          npm run build
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.PLATFORM_REGION || 'ap-south-1' }}
+
+      - name: CDK deploy (dev)
+        working-directory: infra
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r requirements.txt
+          npm install -g aws-cdk
+          cdk deploy --all -c stage=dev --require-approval never \
+            --app ".venv/bin/python app.py" --outputs-file cdk-outputs-dev.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cdk-outputs-dev
+          path: infra/cdk-outputs-dev.json
+
+  # Week 4: the CI detection test runs here, then a deploy-prod job using `environment: prod`
+  # (required reviewers configured in GitHub) provides the manual approval gate.
