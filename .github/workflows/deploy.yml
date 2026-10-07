@@ -15,6 +15,8 @@ concurrency:
 
 jobs:
   deploy-dev:
+    # Skipped (not failed) until the OIDC deploy role exists and AWS_DEPLOY_ROLE_ARN is set in repo variables.
+    if: vars.AWS_DEPLOY_ROLE_ARN != ''
     runs-on: ubuntu-latest
     environment: dev
     steps:
